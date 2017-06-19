@@ -26,6 +26,9 @@ type HTTPConfig struct {
 
 	// Outputs is a list of backed servers where writes will be forwarded
 	Outputs []HTTPOutputConfig `toml:"output"`
+
+	// Queries is a list of backed server where query will be forwarded
+	Queries []HTTPQueryConfig `toml:"query"`
 }
 
 type HTTPOutputConfig struct {
@@ -52,6 +55,12 @@ type HTTPOutputConfig struct {
 	// Skip TLS verification in order to use self signed certificate.
 	// WARNING: It's insecure. Use it only for developing and don't use in production.
 	SkipTLSVerification bool `toml:"skip-tls-verification"`
+}
+
+type HTTPQueryConfig struct {
+	Name     string `toml:"name"`
+	Location string `toml:"location"`
+	Timeout  string `toml:"timeout"`
 }
 
 type UDPConfig struct {

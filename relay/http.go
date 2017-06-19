@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/models"
+	"math/rand"
 )
 
 // HTTP is a relay for HTTP influxdb writes
@@ -32,6 +33,8 @@ type HTTP struct {
 	l       net.Listener
 
 	backends []*httpBackend
+
+	queries []*httpBackend
 }
 
 const (
@@ -64,6 +67,14 @@ func NewHTTP(cfg HTTPConfig) (Relay, error) {
 		}
 
 		h.backends = append(h.backends, backend)
+	}
+
+	for i := range cfg.Queries {
+		query_backend, err := newHttpQueryBackend(&cfg.Queries[i])
+		if err != nil {
+			return nil, err
+		}
+		h.queries = append(h.queries, query_backend)
 	}
 
 	return h, nil
@@ -110,19 +121,30 @@ func (h *HTTP) Stop() error {
 	return h.l.Close()
 }
 
-func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *HTTP) servePing(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("X-InfluxDB-Version", "relay")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *HTTP) serveQuery(w http.ResponseWriter, r *http.Request) {
+	// use random query backend
+	rand.Seed(time.Now().UnixNano())
+	n := rand.Intn(len(h.queries))
+	log.Print(n)
+	resp, err := h.queries[n].poster.post(
+		[]byte(""),
+		r.URL.Query().Encode(),
+		r.Header.Get("Authorization"))
+
+	if err == nil {
+		w.Write([]byte(resp.Body))
+	} else {
+		jsonError(w, http.StatusBadRequest, "request failed")
+	}
+}
+
+func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
-	if r.URL.Path == "/ping" && (r.Method == "GET" || r.Method == "HEAD") {
-			w.Header().Add("X-InfluxDB-Version", "relay")
-			w.WriteHeader(http.StatusNoContent)
-			return
-	}
-
-	if r.URL.Path != "/write" {
-		jsonError(w, http.StatusNotFound, "invalid write endpoint")
-		return
-	}
 
 	if r.Method != "POST" {
 		w.Header().Set("Allow", "POST")
@@ -256,6 +278,19 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	errResponse.Write(w)
 }
 
+func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/ping":
+		h.servePing(w, r)
+	case "/query":
+		h.serveQuery(w, r)
+	case "/write":
+		h.serveWrite(w, r)
+	default:
+		jsonError(w, http.StatusNotFound, "invalid write endpoint")
+	}
+}
+
 type responseData struct {
 	ContentType     string
 	ContentEncoding string
@@ -350,6 +385,29 @@ func (b *simplePoster) post(buf []byte, query string, auth string) (*responseDat
 type httpBackend struct {
 	poster
 	name string
+}
+
+func newHttpQueryBackend(cfg *HTTPQueryConfig) (*httpBackend, error) {
+	if cfg.Name == "" {
+		cfg.Name = cfg.Location
+	}
+
+	timeout := DefaultHTTPTimeout
+	if cfg.Timeout != "" {
+		t, err := time.ParseDuration(cfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing HTTP timeout '%v'", err)
+		}
+		timeout = t
+	}
+
+	// todo use config skipTLSVerification ?
+	var p poster = newSimplePoster(cfg.Location, timeout, true)
+
+	return &httpBackend{
+		poster: p,
+		name:   cfg.Name,
+	}, nil
 }
 
 func newHTTPBackend(cfg *HTTPOutputConfig) (*httpBackend, error) {
