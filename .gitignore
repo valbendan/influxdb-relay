@@ -17,3 +17,5 @@
 
 .idea
 src
+pkg
+influxdb-relay
