@@ -1,7 +1,7 @@
 
 [[http]]
 name = "dev-http"
-bind-addr = "127.0.0.1:8086"
+bind-addr = "0.0.0.0:8086"
 output = [
     {name="docker1", location = "http://172.20.1.21:8086/write", buffer-size-mb = 100, max-batch-kb = 50, max-delay-interval = "5s"},
     {name="docker2", location = "http://172.20.1.22:8086/write", buffer-size-mb = 100, max-batch-kb = 50, max-delay-interval = "5s"},
