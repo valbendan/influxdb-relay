@@ -4,6 +4,8 @@ This project adds a basic high availability layer to InfluxDB. With the right ar
 
 *NOTE:* `influxdb-relay` must be built with Go 1.5+
 
+*NOTE:* This fork *with initial support for /query (may have bug)* 
+
 ## Usage
 
 To build from source and run:
@@ -39,6 +41,10 @@ output = [
     # skip-tls-verification: skip verification for HTTPS location. WARNING: it's insecure. Don't use in production.
     { name="local1", location="http://127.0.0.1:8086/write", timeout="10s" },
     { name="local2", location="http://127.0.0.1:7086/write", timeout="10s" },
+]
+query = [
+    { name="local1", location="http://127.0.0.1:8086/query", timeout="10s" },
+    { name="local2", location="http://127.0.0.1:7086/query", timeout="10s" },
 ]
 
 [[udp]]
@@ -77,29 +83,29 @@ The setup should look like this:
                  │                          
                  ▼                          
          ┌───────────────┐                  
-         │               │                  
-┌────────│ Load Balancer │─────────┐        
-│        │               │         │        
-│        └──────┬─┬──────┘         │        
-│               │ │                │        
-│               │ │                │        
-│        ┌──────┘ └────────┐       │        
-│        │ ┌─────────────┐ │       │┌──────┐
-│        │ │/write or UDP│ │       ││/query│
-│        ▼ └─────────────┘ ▼       │└──────┘
-│  ┌──────────┐      ┌──────────┐  │        
-│  │ InfluxDB │      │ InfluxDB │  │        
-│  │ Relay    │      │ Relay    │  │        
-│  └──┬────┬──┘      └────┬──┬──┘  │        
-│     │    |              |  │     │        
-│     |  ┌─┼──────────────┘  |     │        
-│     │  │ └──────────────┐  │     │        
-│     ▼  ▼                ▼  ▼     │        
-│  ┌──────────┐      ┌──────────┐  │        
-│  │          │      │          │  │        
-└─▶│ InfluxDB │      │ InfluxDB │◀─┘        
-   │          │      │          │           
-   └──────────┘      └──────────┘           
+         │               │       
+         │ Load Balancer │       
+         │               │       
+         └──────┬─┬──────┘       
+                │ │              
+                │ │              
+         ┌──────┘ └────────┐     
+         │ ┌─────────────┐ │     
+         │ │/w /q or UDP │ │     -> /write or /query 
+         ▼ └─────────────┘ ▼     
+   ┌──────────┐      ┌──────────┐
+   │ InfluxDB │      │ InfluxDB │
+   │ Relay    │      │ Relay    │
+   └──┬────┬──┘      └────┬──┬──┘
+      │    |              |  │   
+      |  ┌─┼──────────────┘  |   
+      │  │ └──────────────┐  │   
+      ▼  ▼                ▼  ▼   
+   ┌──────────┐      ┌──────────┐
+   │          │      │          │
+   │ InfluxDB │      │ InfluxDB │
+   │          │      │          │
+   └──────────┘      └──────────┘
  ```
 
 

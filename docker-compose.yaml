@@ -1,0 +1,53 @@
+version: '2'
+
+services:
+  grafana:
+    image: grafana/grafana:4.3.2
+    volumes:
+      - grafana:/etc/grafana
+      - lib_grafana:/var/lib/grafana
+      - log_grafana:/var/log/grafana
+    networks:
+      influxdb_dev:
+        ipv4_address: 172.20.1.10
+
+  influxdb1:
+    image: influxdb:latest
+    volumes:
+      - db1:/var/lib/influxdb
+    networks:
+      influxdb_dev:
+        ipv4_address: 172.20.1.21
+
+  influxdb2:
+    image: influxdb:latest
+    volumes:
+      - db2:/var/lib/influxdb
+    networks:
+      influxdb_dev:
+        ipv4_address: 172.20.1.22
+
+
+networks:
+  influxdb_dev:
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: "false"
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.1.0/24
+          gateway: 172.20.1.1
+
+volumes:
+  db1:
+    driver: local
+  db2:
+    driver: local
+
+  grafana:
+    driver: local
+  lib_grafana:
+    driver: local
+  log_grafana:
+    driver: local
