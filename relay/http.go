@@ -127,19 +127,56 @@ func (h *HTTP) servePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTP) serveQuery(w http.ResponseWriter, r *http.Request) {
-	// use random query backend
-	rand.Seed(time.Now().UnixNano())
-	n := rand.Intn(len(h.queries))
-	log.Print(n)
-	resp, err := h.queries[n].poster.post(
-		[]byte(""),
-		r.URL.Query().Encode(),
-		r.Header.Get("Authorization"))
+	single_node_request := func(w http.ResponseWriter, r *http.Request) {
+		// use random query backend
+		rand.Seed(time.Now().UnixNano())
+		n := rand.Intn(len(h.queries))
+		log.Print(n)
+		resp, err := h.queries[n].poster.post(
+			[]byte(""),
+			r.URL.Query().Encode(),
+			r.Header.Get("Authorization"))
 
-	if err == nil {
+		if err == nil {
+			w.Write([]byte(resp.Body))
+		} else {
+			jsonError(w, http.StatusBadRequest, "request failed")
+		}
+	}
+
+	all_node_request := func(w http.ResponseWriter, r *http.Request) {
+		var resp *responseData
+		var err error
+		for _, q := range h.queries {
+			resp, err = q.poster.post(
+				[]byte{},
+				r.URL.Query().Encode(),
+				r.Header.Get("Authorization"))
+
+			if err == nil {
+				continue;
+			}
+			// todo fix the partial success
+		}
 		w.Write([]byte(resp.Body))
-	} else {
-		jsonError(w, http.StatusBadRequest, "request failed")
+	}
+
+	error_request := func(w http.ResponseWriter, r *http.Request, token string) {
+		msg := "relay is not support `" + token + "` expr!"
+		jsonError(w, http.StatusBadRequest, msg)
+	}
+
+	q := strings.Trim(strings.ToUpper(r.URL.Query().Get("q")), " \t\r\n")
+	tokens := strings.Split(q, " ")
+	switch tokens[0] {
+	case "SELECT", "SHOW":
+		single_node_request(w, r)
+	case "DELETE", "DROP", "GRANT", "REVOKE", "ALTER", "SET", "CREATE":
+		all_node_request(w, r)
+	case "KILL":
+		error_request(w, r, tokens[0])
+	default:
+		error_request(w, r, tokens[0])
 	}
 }
 
