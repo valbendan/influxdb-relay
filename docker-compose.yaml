@@ -27,6 +27,12 @@ services:
       influxdb_dev:
         ipv4_address: 172.20.1.22
 
+  relay:
+    image: influxdb-relay:dev
+    networks:
+      influxdb_dev:
+        ipv4_address: 172.20.1.30
+
 
 networks:
   influxdb_dev:
