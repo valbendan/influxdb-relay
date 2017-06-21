@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"net/http"
 )
 
 const (
@@ -48,23 +49,27 @@ func newRetryBuffer(size, batch int, max time.Duration, p poster) *retryBuffer {
 }
 
 func (r *retryBuffer) post(buf []byte, query string, auth string) (*responseData, error) {
-	if atomic.LoadInt32(&r.buffering) == 0 {
-		resp, err := r.p.post(buf, query, auth)
-		// TODO A 5xx caused by the point data could cause the relay to buffer forever
-		if err == nil && resp.StatusCode/100 != 5 {
-			return resp, err
-		}
-		atomic.StoreInt32(&r.buffering, 1)
-	}
+	// if atomic.LoadInt32(&r.buffering) == 0 {
+	// 	resp, err := r.p.post(buf, query, auth)
+	// 	// TODO A 5xx caused by the point data could cause the relay to buffer forever
+	// 	if err == nil && resp.StatusCode/100 != 5 {
+	// 		return resp, err
+	// 	}
+	// 	atomic.StoreInt32(&r.buffering, 1)
+	// }
+
+	//// direct to cache it
 
 	// already buffering or failed request
-	batch, err := r.list.add(buf, query, auth)
+	_, err := r.list.add(buf, query, auth)
 	if err != nil {
 		return nil, err
 	}
 
-	batch.wg.Wait()
-	return batch.resp, nil
+	return &responseData{
+		StatusCode: http.StatusNoContent,
+		Body:       []byte{},
+	}, nil
 }
 
 func (r *retryBuffer) run() {

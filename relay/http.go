@@ -170,13 +170,13 @@ func (h *HTTP) serveQuery(w http.ResponseWriter, r *http.Request) {
 	tokens := strings.Split(q, " ")
 	switch tokens[0] {
 	case "SELECT", "SHOW":
-		single_node_request(w, r)
+		single_node_request(w, r) // proxy to one node is ok (ASSUME all backend have the same data)
 	case "DELETE", "DROP", "GRANT", "REVOKE", "ALTER", "SET", "CREATE":
-		all_node_request(w, r)
+		all_node_request(w, r) // must proxy to all node
 	case "KILL":
-		error_request(w, r, tokens[0])
+		error_request(w, r, tokens[0]) // not supported (we don't know the request should be proxy to which server)
 	default:
-		error_request(w, r, tokens[0])
+		error_request(w, r, tokens[0]) // unknown command (direct return error)
 	}
 }
 
