@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 	"net/http"
+	"log"
 )
 
 const (
@@ -90,6 +91,14 @@ func (r *retryBuffer) run() {
 				atomic.StoreInt32(&r.buffering, 0)
 				batch.wg.Done()
 				break
+			} else { // resp.StatusCode == 5xx
+				// this prevent the forever loop of InfluxDB server return 5xx
+				if interval >= r.maxInterval {
+					log.Print("lost data: ", buf.String())
+					batch.resp = resp
+					batch.wg.Done()
+					break
+				}
 			}
 
 			if interval != r.maxInterval {
