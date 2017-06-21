@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+export GOPATH=`pwd`
+go build
+
+docker build . -t influxdb-relay:dev
