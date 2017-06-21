@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 
+
+function check_command_exists() {
+    local COMMAND=$1
+    hash $COMMAND
+    if [[ 0 = $? ]];
+    then
+        echo "yes"
+    else
+        echo "no"
+    fi
+}
+
+GDM_EXISTS=`check_command_exists gdm`
+if [[ $GDM_EXISTS != "yes" ]];
+then
+    echo "gdm command is not exists!"
+    exit 1
+fi
+
 export GOPATH=`pwd`
+gdm restore
 go build
 
 docker build . -t influxdb-relay:dev
