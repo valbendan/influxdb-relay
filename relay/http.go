@@ -158,7 +158,12 @@ func (h *HTTP) serveQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			// todo fix the partial success
 		}
-		w.Write([]byte(resp.Body))
+
+		if err == nil {
+			w.Write([]byte(resp.Body))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 	}
 
 	error_request := func(w http.ResponseWriter, r *http.Request, token string) {
@@ -491,16 +496,15 @@ func newHTTPBackend(cfg *HTTPOutputConfig) (*httpBackend, error) {
 
 var ErrBufferFull = errors.New("retry buffer full")
 
-var bufPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
+// use bufPool may lost data
+// var bufPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 
+// use bufPool may lost data
 func getBuf() *bytes.Buffer {
-	if bb, ok := bufPool.Get().(*bytes.Buffer); ok {
-		return bb
-	}
 	return new(bytes.Buffer)
 }
 
+// use bufPool may lost data
 func putBuf(b *bytes.Buffer) {
 	b.Reset()
-	bufPool.Put(b)
 }
