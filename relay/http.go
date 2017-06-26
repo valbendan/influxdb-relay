@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -131,7 +130,6 @@ func (h *HTTP) serveQuery(w http.ResponseWriter, r *http.Request) {
 		// use random query backend
 		rand.Seed(time.Now().UnixNano())
 		n := rand.Intn(len(h.queries))
-		log.Print(n)
 		resp, err := h.queries[n].poster.post(
 			[]byte(""),
 			r.URL.Query().Encode(),
@@ -224,7 +222,6 @@ func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 	bodyBuf := getBuf()
 	_, err := bodyBuf.ReadFrom(body)
 	if err != nil {
-		putBuf(bodyBuf)
 		jsonError(w, http.StatusInternalServerError, "problem reading request body")
 		return
 	}
@@ -232,7 +229,6 @@ func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 	precision := queryParams.Get("precision")
 	points, err := models.ParsePointsWithPrecision(bodyBuf.Bytes(), start, precision)
 	if err != nil {
-		putBuf(bodyBuf)
 		jsonError(w, http.StatusBadRequest, "unable to parse points")
 		return
 	}
@@ -247,11 +243,7 @@ func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// done with the input points
-	putBuf(bodyBuf)
-
 	if err != nil {
-		putBuf(outBuf)
 		jsonError(w, http.StatusInternalServerError, "problem writing points")
 		return
 	}
@@ -264,15 +256,9 @@ func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 	// check for authorization performed via the header
 	authHeader := r.Header.Get("Authorization")
 
-	var wg sync.WaitGroup
-	wg.Add(len(h.backends))
-
-	var responses = make(chan *responseData, len(h.backends))
-
 	for _, b := range h.backends {
 		b := b
 		go func() {
-			defer wg.Done()
 			resp, err := b.post(outBytes, query, authHeader)
 			if err != nil {
 				log.Printf("Problem posting to relay %q backend %q: %v", h.Name(), b.name, err)
@@ -280,44 +266,11 @@ func (h *HTTP) serveWrite(w http.ResponseWriter, r *http.Request) {
 				if resp.StatusCode/100 == 5 {
 					log.Printf("5xx response for relay %q backend %q: %v", h.Name(), b.name, resp.StatusCode)
 				}
-				responses <- resp
 			}
 		}()
 	}
 
-	go func() {
-		wg.Wait()
-		close(responses)
-		putBuf(outBuf)
-	}()
-
-	var errResponse *responseData
-
-	for resp := range responses {
-		switch resp.StatusCode / 100 {
-		case 2:
-			w.WriteHeader(http.StatusNoContent)
-			return
-
-		case 4:
-			// user error
-			resp.Write(w)
-			return
-
-		default:
-			// hold on to one of the responses to return back to the client
-			errResponse = resp
-		}
-	}
-
-	// no successful writes
-	if errResponse == nil {
-		// failed to make any valid request...
-		jsonError(w, http.StatusServiceUnavailable, "unable to write points")
-		return
-	}
-
-	errResponse.Write(w)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -501,7 +454,7 @@ var ErrBufferFull = errors.New("retry buffer full")
 
 // use bufPool may lost data
 func getBuf() *bytes.Buffer {
-	return new(bytes.Buffer)
+	return bytes.NewBuffer(make([]byte, 2*KB))
 }
 
 // use bufPool may lost data

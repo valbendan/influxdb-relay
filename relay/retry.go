@@ -1,12 +1,10 @@
 package relay
 
 import (
-	"bytes"
-	"sync"
-	"sync/atomic"
 	"time"
 	"net/http"
 	"log"
+	"bytes"
 )
 
 const (
@@ -16,13 +14,25 @@ const (
 
 type Operation func() error
 
+type batchPoints struct {
+	Query string
+	Auth  string
+	Data  []byte
+}
+
+type cachedPoints struct {
+	Query   string
+	Auth    string
+	Buf     bytes.Buffer
+	BufSize int
+	Time    time.Time // create time of this cachedPoints
+}
+
 // Buffers and retries operations, if the buffer is full operations are dropped.
 // Only tries one operation at a time, the next operation is not attempted
 // until success or timeout of the previous operation.
 // There is no delay between attempts of different operations.
 type retryBuffer struct {
-	buffering int32
-
 	initialInterval time.Duration
 	multiplier      time.Duration
 	maxInterval     time.Duration
@@ -30,7 +40,8 @@ type retryBuffer struct {
 	maxBuffered int
 	maxBatch    int
 
-	list *bufferList
+	cachedItems []*cachedPoints // cachedPoints
+	itemChan    chan batchPoints
 
 	p poster
 }
@@ -42,29 +53,21 @@ func newRetryBuffer(size, batch int, max time.Duration, p poster) *retryBuffer {
 		maxInterval:     max,
 		maxBuffered:     size,
 		maxBatch:        batch,
-		list:            newBufferList(size, batch),
 		p:               p,
+		cachedItems:     make([]*cachedPoints, 0),
+		itemChan:        make(chan batchPoints, 10000),
 	}
 	go r.run()
 	return r
 }
 
 func (r *retryBuffer) post(buf []byte, query string, auth string) (*responseData, error) {
-	// if atomic.LoadInt32(&r.buffering) == 0 {
-	// 	resp, err := r.p.post(buf, query, auth)
-	// 	// TODO A 5xx caused by the point data could cause the relay to buffer forever
-	// 	if err == nil && resp.StatusCode/100 != 5 {
-	// 		return resp, err
-	// 	}
-	// 	atomic.StoreInt32(&r.buffering, 1)
-	// }
 
-	//// direct to cache it
-
-	// already buffering or failed request
-	_, err := r.list.add(buf, query, auth)
-	if err != nil {
-		return nil, err
+	// direct pass to chan
+	r.itemChan <- batchPoints{
+		Query: query,
+		Auth:  auth,
+		Data:  buf,
 	}
 
 	return &responseData{
@@ -74,31 +77,40 @@ func (r *retryBuffer) post(buf []byte, query string, auth string) (*responseData
 }
 
 func (r *retryBuffer) run() {
-	buf := bytes.NewBuffer(make([]byte, 0, r.maxBatch))
-	for {
-		buf.Reset()
-		batch := r.list.pop()
-
-		for _, b := range batch.bufs {
-			buf.Write(b)
+	addToCache := func(points *batchPoints) {
+		addToCachedFlag := false
+		for _, cached := range r.cachedItems {
+			if cached.Auth == points.Auth && cached.Query == points.Query {
+				cached.Buf.Write(points.Data)
+				cached.BufSize += len(points.Data)
+				addToCachedFlag = true
+				break
+			}
 		}
+		if addToCachedFlag == false {
+			cached := cachedPoints{
+				Query:   points.Query,
+				Auth:    points.Auth,
+				Time:    time.Now(),
+				Buf:     *bytes.NewBuffer([]byte{}),
+				BufSize: 0,
+			}
+			r.cachedItems = append(r.cachedItems, &cached)
+		}
+	}
 
+	postToInfluxDB := func(data []byte, query string, auth string) {
 		interval := r.initialInterval
 		for {
-			resp, err := r.p.post(buf.Bytes(), batch.query, batch.auth)
+			resp, err := r.p.post(data, query, auth)
 			if err == nil && resp.StatusCode/100 != 5 {
-				batch.resp = resp
-				atomic.StoreInt32(&r.buffering, 0)
-				batch.wg.Done()
+				log.Print("send data: ", len(data))
 				break
-			} else { // resp.StatusCode == 5xx
+			} else if interval >= r.maxInterval {
+				// resp.StatusCode == 5xx
 				// this prevent the forever loop of InfluxDB server return 5xx
-				if interval >= r.maxInterval {
-					log.Print("lost data: ", buf.String())
-					batch.resp = resp
-					batch.wg.Done()
-					break
-				}
+				log.Print("lost data: ", string(data))
+				break
 			}
 
 			if interval != r.maxInterval {
@@ -111,104 +123,24 @@ func (r *retryBuffer) run() {
 			time.Sleep(interval)
 		}
 	}
-}
 
-type batch struct {
-	query string
-	auth  string
-	bufs  [][]byte
-	size  int
-	full  bool
-
-	wg   sync.WaitGroup
-	resp *responseData
-
-	next *batch
-}
-
-func newBatch(buf []byte, query string, auth string) *batch {
-	b := new(batch)
-	b.bufs = [][]byte{buf}
-	b.size = len(buf)
-	b.query = query
-	b.auth = auth
-	b.wg.Add(1)
-	return b
-}
-
-type bufferList struct {
-	cond     *sync.Cond
-	head     *batch
-	size     int
-	maxSize  int
-	maxBatch int
-}
-
-func newBufferList(maxSize, maxBatch int) *bufferList {
-	return &bufferList{
-		cond:     sync.NewCond(new(sync.Mutex)),
-		maxSize:  maxSize,
-		maxBatch: maxBatch,
-	}
-}
-
-// pop will remove and return the first element of the list, blocking if necessary
-func (l *bufferList) pop() *batch {
-	l.cond.L.Lock()
-
-	for l.size == 0 {
-		l.cond.Wait()
-	}
-
-	b := l.head
-	l.head = l.head.next
-	l.size -= b.size
-
-	l.cond.L.Unlock()
-
-	return b
-}
-
-func (l *bufferList) add(buf []byte, query string, auth string) (*batch, error) {
-	l.cond.L.Lock()
-
-	if l.size+len(buf) > l.maxSize {
-		l.cond.L.Unlock()
-		return nil, ErrBufferFull
-	}
-
-	l.size += len(buf)
-	l.cond.Signal()
-
-	var cur **batch
-
-	// non-nil batches that either don't match the query string, don't match the auth
-	// credentials, or would be too large when adding the current set of points
-	// (auth must be checked to prevent potential problems in multi-user scenarios)
-	for cur = &l.head; *cur != nil; cur = &(*cur).next {
-		if (*cur).query != query || (*cur).auth != auth || (*cur).full {
-			continue
+	for {
+		select {
+		case points := <-r.itemChan:
+			addToCache(&points)
+		default:
+			time.Sleep(10 * time.Millisecond)
 		}
 
-		if (*cur).size+len(buf) > l.maxBatch {
-			// prevent future writes from preceding this write
-			(*cur).full = true
-			continue
+		for index, cached := range r.cachedItems {
+			nowTime := time.Now()
+			if nowTime.Sub(cached.Time) > time.Duration(20*time.Second) || cached.BufSize > 2*MB {
+				// remove cached from r.cachedItems
+				r.cachedItems = append(r.cachedItems[:index], r.cachedItems[index+1:]...)
+
+				// send removed item to InfluxDB server
+				postToInfluxDB(cached.Buf.Bytes(), cached.Query, cached.Auth)
+			}
 		}
-
-		break
 	}
-
-	if *cur == nil {
-		// new tail element
-		*cur = newBatch(buf, query, auth)
-	} else {
-		// append to current batch
-		b := *cur
-		b.size += len(buf)
-		b.bufs = append(b.bufs, buf)
-	}
-
-	l.cond.L.Unlock()
-	return *cur, nil
 }

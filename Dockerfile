@@ -4,8 +4,7 @@ MAINTAINER valbendan
 
 RUN mkdir /etc/influxdb-relay
 COPY influxdb-relay /usr/bin
-COPY entry.sh       /
 COPY dev.toml       /etc/influxdb-relay/dev.toml
 RUN chmod 555 /usr/bin/influxdb-relay
 
-ENTRYPOINT /entry.sh
+ENTRYPOINT ["/usr/bin/influxdb-relay", "-config", "/etc/influxdb-relay/dev.toml"]
