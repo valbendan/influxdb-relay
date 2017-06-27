@@ -101,22 +101,23 @@ func (r *retryBuffer) run() {
 
 	postToInfluxDB := func(data []byte, query string, auth string) {
 		interval := r.initialInterval
+		maxInterval := r.maxInterval
 		for {
 			resp, err := r.p.post(data, query, auth)
 			if err == nil && resp.StatusCode/100 != 5 {
 				log.Print("send data: ", len(data))
 				break
-			} else if interval >= r.maxInterval {
+			} else if interval >= maxInterval {
 				// resp.StatusCode == 5xx
 				// this prevent the forever loop of InfluxDB server return 5xx
 				log.Print("lost data: ", string(data))
 				break
 			}
 
-			if interval != r.maxInterval {
+			if interval <= maxInterval {
 				interval *= r.multiplier
-				if interval > r.maxInterval {
-					interval = r.maxInterval
+				if interval > maxInterval {
+					interval = maxInterval
 				}
 			}
 
@@ -134,7 +135,7 @@ func (r *retryBuffer) run() {
 
 		for index, cached := range r.cachedItems {
 			nowTime := time.Now()
-			if nowTime.Sub(cached.Time) > time.Duration(20*time.Second) || cached.BufSize > 2*MB {
+			if nowTime.Sub(cached.Time) > r.maxInterval || cached.BufSize > r.maxBuffered {
 				// remove cached from r.cachedItems
 				r.cachedItems = append(r.cachedItems[:index], r.cachedItems[index+1:]...)
 
