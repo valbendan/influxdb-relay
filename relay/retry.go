@@ -141,6 +141,9 @@ func (r *retryBuffer) run() {
 
 				// send removed item to InfluxDB server
 				postToInfluxDB(cached.Buf.Bytes(), cached.Query, cached.Auth)
+
+				// 这个 break 是需要的,因为 r.cachedItems 里面的元素会更新, 所以需要 break for
+				break;
 			}
 		}
 	}
