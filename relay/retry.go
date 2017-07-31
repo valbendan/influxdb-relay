@@ -92,8 +92,8 @@ func (r *retryBuffer) run() {
 				Query:   points.Query,
 				Auth:    points.Auth,
 				Time:    time.Now(),
-				Buf:     *bytes.NewBuffer([]byte{}),
-				BufSize: 0,
+				Buf:     *bytes.NewBuffer(points.Data),
+				BufSize: len(points.Data),
 			}
 			r.cachedItems = append(r.cachedItems, &cached)
 		}
